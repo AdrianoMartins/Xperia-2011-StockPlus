@@ -4407,6 +4407,20 @@ static uint32_t msm_sdcc_setup_power(struct device *dv, unsigned int vdd)
 	return rc;
 }
 
+
+static uint32_t wifi_power(struct device *dv, unsigned int vdd)
+{
+	int rc = 0;
+	rc = msm_sdcc_setup_power(dv,vdd);
+	if (vdd)
+		gpio_set_value(57, 1);
+	else
+		gpio_set_value(57, 0);
+    
+	return rc;
+}
+
+
 static unsigned int msm7x30_sdcc_slot_status(struct device *dev)
 {
 	return (unsigned int)
@@ -4416,13 +4430,13 @@ static unsigned int msm7x30_sdcc_slot_status(struct device *dev)
 
 static struct mmc_platform_data msm7x30_sdc3_data = {
 	.ocr_mask = MMC_VDD_20_21 | MMC_VDD_21_22,
-	.translate_vdd = msm_sdcc_setup_power,
+    .translate_vdd = wifi_power,
 	.mmc_bus_width = MMC_CAP_4_BIT_DATA,
 	.sdiowakeup_irq = MSM_GPIO_TO_INT(118),
 	.msmsdcc_fmin = 144000,
 	.msmsdcc_fmid = 24576000,
 	.msmsdcc_fmax = 49152000,
-	.nonremovable = 1,
+	.nonremovable = 0,
 };
 
 static struct mmc_platform_data msm7x30_sdc4_data = {
