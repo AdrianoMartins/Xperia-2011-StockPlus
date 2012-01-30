@@ -35,6 +35,7 @@
 #include "clock-7x30.h"
 #include "acpuclock.h"
 #include "spm.h"
+#include "avs.h"
 
 #define SCSS_CLK_CTL_ADDR	(MSM_ACC_BASE + 0x04)
 #define SCSS_CLK_SEL_ADDR	(MSM_ACC_BASE + 0x08)
@@ -66,6 +67,7 @@ struct clock_state {
 	uint32_t			acpu_switch_time_us;
 	uint32_t			vdd_switch_time_us;
 	struct clk			*ebi1_clk;
+    int (*acpu_set_vdd) (int mvolts);
 };
 
 struct pll {
@@ -131,14 +133,14 @@ static struct clkctl_acpu_speed acpu_freq_tbl[] = {
 	{ 1, 806400,  PLL_2, 3, 0, UINT_MAX, 1100, VDD_RAW(1100), &pll2_tbl[0]},
 	{ 1, 921600,  PLL_2, 3, 0, UINT_MAX, 1150, VDD_RAW(1150), &pll2_tbl[1]},
 	{ 1, 1024000, PLL_2, 3, 0, UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[2]},
-	{ 0, 1113000, PLL_2, 3, 0, UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[3]},
-	{ 1, 1200000, PLL_2, 3, 0, UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[4]},
-	{ 0, 1305600, PLL_2, 3, 0, UINT_MAX, 1250, VDD_RAW(1250), &pll2_tbl[5]},
+	{ 1, 1113000, PLL_2, 3, 0, UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[3]},
+	{ 0, 1200000, PLL_2, 3, 0, UINT_MAX, 1200, VDD_RAW(1200), &pll2_tbl[4]},
+	{ 1, 1305600, PLL_2, 3, 0, UINT_MAX, 1250, VDD_RAW(1250), &pll2_tbl[5]},
 	{ 1, 1401600, PLL_2, 3, 0, UINT_MAX, 1250, VDD_RAW(1250), &pll2_tbl[6]},
-	{ 0, 1516800, PLL_2, 3, 0, UINT_MAX, 1300, VDD_RAW(1300), &pll2_tbl[7]},
+	{ 1, 1516800, PLL_2, 3, 0, UINT_MAX, 1300, VDD_RAW(1300), &pll2_tbl[7]},
 	{ 1, 1612800, PLL_2, 3, 0, UINT_MAX, 1350, VDD_RAW(1350), &pll2_tbl[8]},
 	{ 1, 1708800, PLL_2, 3, 0, UINT_MAX, 1400, VDD_RAW(1400), &pll2_tbl[9]},
-	{ 0, 1804800, PLL_2, 3, 0, UINT_MAX, 1450, VDD_RAW(1450), &pll2_tbl[10]},
+	{ 1, 1804800, PLL_2, 3, 0, UINT_MAX, 1450, VDD_RAW(1450), &pll2_tbl[10]},
 	{ 1, 1900800, PLL_2, 3, 0, UINT_MAX, 1500, VDD_RAW(1500), &pll2_tbl[11]},
 	{ 0 }
 };
@@ -159,9 +161,9 @@ unsigned long acpuclk_wait_for_irq(void)
 	return ret;
 }
 
-static int acpuclk_set_acpu_vdd(struct clkctl_acpu_speed *s)
+static int acpuclk_set_acpu_vdd(int vdd)
 {
-	int ret = msm_spm_set_vdd(0, s->vdd_raw);
+	int ret = msm_spm_set_vdd(0,vdd);
 	if (ret)
 		return ret;
 
@@ -213,6 +215,7 @@ int acpuclk_set_rate(int cpu, unsigned long rate, enum setrate_reason reason)
 {
 	struct clkctl_acpu_speed *tgt_s, *strt_s;
 	int res, rc = 0;
+    int freq_index = 0;
 
 	if (reason == SETRATE_CPUFREQ)
 		mutex_lock(&drv_state.lock);
@@ -223,6 +226,7 @@ int acpuclk_set_rate(int cpu, unsigned long rate, enum setrate_reason reason)
 		goto out;
 
 	for (tgt_s = acpu_freq_tbl; tgt_s->acpu_clk_khz != 0; tgt_s++) {
+        freq_index++;
 		if (tgt_s->acpu_clk_khz == rate)
 			break;
 	}
@@ -232,9 +236,21 @@ int acpuclk_set_rate(int cpu, unsigned long rate, enum setrate_reason reason)
 	}
 
 	if (reason == SETRATE_CPUFREQ) {
+        
+        #ifdef CONFIG_MSM_CPU_AVS
+        	/* Notify avs before changing frequency */
+        	rc = avs_adjust_freq(freq_index, 1);
+        	if (rc) {
+           			printk(KERN_ERR
+               				"acpuclock: Unable to increase ACPU "
+               				"vdd.\n");
+            			goto out;
+            		}
+        #endif
+        
 		/* Increase VDD if needed. */
 		if (tgt_s->vdd_mv > strt_s->vdd_mv) {
-			rc = acpuclk_set_acpu_vdd(tgt_s);
+			rc = acpuclk_set_acpu_vdd(tgt_s->vdd_raw);
 			if (rc < 0) {
 				pr_err("ACPU VDD increase to %d mV failed "
 					"(%d)\n", tgt_s->vdd_mv, rc);
@@ -305,10 +321,18 @@ int acpuclk_set_rate(int cpu, unsigned long rate, enum setrate_reason reason)
 	/* Nothing else to do for power collapse. */
 	if (reason == SETRATE_PC)
 		goto out;
+    
+    #ifdef CONFIG_MSM_CPU_AVS
+    	/* notify avs after changing frequency */
+    	rc = avs_adjust_freq(freq_index, 0);
+    	if (rc)
+        		printk(KERN_ERR
+        			"acpuclock: Unable to drop ACPU vdd.\n");
+    #endif    
 
 	/* Drop VDD level if we can. */
 	if (tgt_s->vdd_mv < strt_s->vdd_mv) {
-		res = acpuclk_set_acpu_vdd(tgt_s);
+		res = acpuclk_set_acpu_vdd(tgt_s->vdd_raw);
 		if (res)
 			pr_warning("ACPU VDD decrease to %d mV failed (%d)\n",
 					tgt_s->vdd_mv, res);
@@ -408,7 +432,7 @@ static void __init acpuclk_init(void)
 				break;
 
 	/* Set initial ACPU VDD. */
-	acpuclk_set_acpu_vdd(s);
+	acpuclk_set_acpu_vdd(s->vdd_raw);
 
 	drv_state.current_speed = s;
 
@@ -438,6 +462,23 @@ static void __init lpj_init(void)
 	}
 }
 
+
+#ifdef CONFIG_MSM_CPU_AVS
+static int __init acpu_avs_init(int (*set_vdd) (int), int khz)
+{
+	int i;
+    int freq_count = 0;
+    int freq_index = -1;
+    for (i = 0; acpu_freq_tbl[i].acpu_clk_khz; i++) {
+     	freq_count++;
+     	if (acpu_freq_tbl[i].acpu_clk_khz == khz)
+     		freq_index = i;
+     }
+    return avs_init(set_vdd, freq_count, freq_index);
+    }
+#endif
+
+
 #ifdef CONFIG_CPU_FREQ_MSM
 static struct cpufreq_frequency_table cpufreq_tbl[ARRAY_SIZE(acpu_freq_tbl)];
 
@@ -455,6 +496,14 @@ static void setup_cpufreq_table(void)
 	cpufreq_tbl[i].frequency = CPUFREQ_TABLE_END;
 
 	cpufreq_frequency_table_get_attr(cpufreq_tbl, smp_processor_id());
+    
+    #ifdef CONFIG_MSM_CPU_AVS
+        if (!acpu_avs_init(drv_state.acpu_set_vdd,
+                          drv_state.current_speed->acpu_clk_khz)) {
+        	/* avs init successful. avs will handle voltage changes */
+        	drv_state.acpu_set_vdd = NULL;
+        }
+    #endif    
 }
 #else
 static inline void setup_cpufreq_table(void) { }
