@@ -189,7 +189,6 @@
 #define MSM_PMEM_ADSP_SIZE      0x1800000
 #define MSM_PMEM_SWIQI_SIZE     0xE00000
 #define PMEM_KERNEL_EBI1_SIZE   0x600000
-#define MSM_PMEM_AUDIO_SIZE     0x200000
 
 #define PMIC_GPIO_INT		27
 #define PMIC_VREG_WLAN_LEVEL	2900
@@ -3526,12 +3525,6 @@ static struct android_pmem_platform_data android_pmem_camera_pdata = {
 	.cached = 1,
 };
 
-static struct android_pmem_platform_data android_pmem_audio_pdata = {
-	.name = "pmem_audio",
-	.allocator_type = PMEM_ALLOCATORTYPE_BITMAP,
-	.cached = 0,
-};
-
 static struct platform_device android_pmem_kernel_ebi1_device = {
 	.name = "android_pmem",
 	.id = 1,
@@ -3559,12 +3552,6 @@ static struct platform_device android_pmem_camera_device = {
 	.name = "android_pmem",
 	.id = 3,
 	.dev = {.platform_data = &android_pmem_camera_pdata},
-};
-
-static struct platform_device android_pmem_audio_device = {
-	.name = "android_pmem",
-	.id = 4,
-	.dev = {.platform_data = &android_pmem_audio_pdata},
 };
 
 struct kgsl_cpufreq_voter {
@@ -3932,7 +3919,6 @@ static struct platform_device *devices[] __initdata = {
 	&android_pmem_adsp_cached_device,
 	&android_pmem_swiqi_device,
 	&android_pmem_camera_device,
-	&android_pmem_audio_device,
 	&msm_device_i2c,
 	&msm_device_i2c_2,
 	&msm_device_uart_dm1,
@@ -4692,14 +4678,6 @@ static void __init pmem_camera_size_setup(char **p)
 
 __early_param("pmem_camera_size=", pmem_camera_size_setup);
 
-static unsigned pmem_audio_size = MSM_PMEM_AUDIO_SIZE;
-static void __init pmem_audio_size_setup(char **p)
-{
-	pmem_audio_size = memparse(*p, p);
-}
-
-__early_param("pmem_audio_size=", pmem_audio_size_setup);
-
 static unsigned pmem_kernel_ebi1_size = PMEM_KERNEL_EBI1_SIZE;
 static void __init pmem_kernel_ebi1_size_setup(char **p)
 {
@@ -4769,15 +4747,6 @@ static void __init msm7x30_allocate_memory_regions(void)
 		android_pmem_camera_pdata.start = __pa(addr);
 		android_pmem_camera_pdata.size = size;
 		pr_info("allocating %lu bytes at %p (%lx physical) for camera "
-			"pmem arena\n", size, addr, __pa(addr));
-	}
-
-	size = pmem_audio_size;
-	if (size) {
-		addr = alloc_bootmem(size);
-		android_pmem_audio_pdata.start = __pa(addr);
-		android_pmem_audio_pdata.size = size;
-		pr_info("allocating %lu bytes at %p (%lx physical) for audio "
 			"pmem arena\n", size, addr, __pa(addr));
 	}
 
